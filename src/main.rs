@@ -1,25 +1,54 @@
 mod cli;
+mod db;
 mod model;
-mod store;
 
+use anyhow::{Context, Result};
 use clap::Parser;
+use sqlx::SqlitePool;
+use std::{fs, path::PathBuf};
 
-fn main() {
-    let args = cli::Args::parse();
-    let mut store = store::Store::new();
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli::Args { db_path, command } = cli::Args::parse();
 
-    match args.command {
+    let db_path = db_path.unwrap_or_else(default_db_path);
+
+    ensure_parent_dir_exists(&db_path)?;
+
+    let pool = db::connect(&db_path).await?;
+    db::init(&pool).await?;
+
+    run_command(command, &pool).await
+}
+
+fn default_db_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("job-tracker")
+        .join("job_tracker.db")
+}
+
+fn ensure_parent_dir_exists(path: &PathBuf) -> Result<()> {
+    let parent = path.parent().context("db path has no parent directory")?;
+    fs::create_dir_all(parent)?;
+    Ok(())
+}
+
+async fn run_command(command: cli::Command, pool: &SqlitePool) -> Result<()> {
+    match command {
         cli::Command::Add {
             company,
             role,
             url,
             status,
         } => {
-            let id = store.add_job(company, role, url, status);
-            println!("Added job #{id}");
+            let id = db::insert_job(pool, &company, &role, url.as_deref(), status).await?;
+            println!("Added job #{id}: {company} — {role}");
         }
         cli::Command::List => {
-            let jobs = store.list_jobs();
+            let jobs: Vec<crate::model::Job> = db::list_jobs(pool).await?;
             if jobs.is_empty() {
                 println!("No jobs yet.");
             } else {
@@ -36,34 +65,13 @@ fn main() {
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::Status;
-
     #[test]
-    fn smoke_still_passes() {
+    fn smoke() {
         assert_eq!(2 + 2, 4);
-    }
-
-    #[test]
-    fn add_job_increments_ids() {
-        let mut s = store::Store::new();
-        let a = s.add_job("Acme".into(), "Backend".into(), None, Status::Applied);
-        let b = s.add_job("Beta".into(), "Rust Dev".into(), None, Status::Interviewing);
-        assert_eq!(a, 1);
-        assert_eq!(b, 2);
-    }
-
-    #[test]
-    fn list_jobs_newest_first() {
-        let mut s = store::Store::new();
-        s.add_job("A".into(), "R1".into(), None, Status::Applied);
-        s.add_job("B".into(), "R2".into(), None, Status::Applied);
-        let jobs = s.list_jobs();
-        assert_eq!(jobs[0].company, "B");
-        assert_eq!(jobs[1].company, "A");
     }
 }

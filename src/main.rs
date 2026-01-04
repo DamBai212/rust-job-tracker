@@ -65,6 +65,10 @@ async fn run_command(command: cli::Command, pool: &SqlitePool) -> Result<()> {
                 }
             }
         }
+        cli::Command::UpdateStatus { id, status } => {
+            db::update_status(pool, id as i64, status).await?;
+            println!("Updated job #{id} -> {status}");
+        }
     }
     Ok(())
 }

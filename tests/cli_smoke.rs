@@ -21,7 +21,19 @@ fn add_then_list_isolated_db() {
     ]);
     add.assert().success().stdout(contains("Added job"));
 
+    let mut upd = cargo_bin_cmd!("rust-job-tracker");
+    upd.args([
+        "--db-path",
+        db_path.to_str().unwrap(),
+        "update-status",
+        "--id",
+        "1",
+        "--status",
+        "interviewing",
+    ]);
+    upd.assert().success().stdout(contains("Updated job #1"));
+
     let mut list = cargo_bin_cmd!("rust-job-tracker");
     list.args(["--db-path", db_path.to_str().unwrap(), "list"]);
-    list.assert().success().stdout(contains("Acme"));
+    list.assert().success().stdout(contains("interviewing"));
 }

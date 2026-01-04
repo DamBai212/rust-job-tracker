@@ -5,6 +5,7 @@ mod model;
 use anyhow::{Context, Result};
 use clap::Parser;
 use sqlx::SqlitePool;
+use std::path::Path;
 use std::{fs, path::PathBuf};
 
 #[tokio::main]
@@ -30,7 +31,7 @@ fn default_db_path() -> PathBuf {
         .join("job_tracker.db")
 }
 
-fn ensure_parent_dir_exists(path: &PathBuf) -> Result<()> {
+fn ensure_parent_dir_exists(path: &Path) -> Result<()> {
     let parent = path.parent().context("db path has no parent directory")?;
     fs::create_dir_all(parent)?;
     Ok(())

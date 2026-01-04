@@ -27,4 +27,10 @@ pub enum Command {
         status: Status,
     },
     List,
+    UpdateStatus {
+        #[arg(long)]
+        id: u64,
+        #[arg(long)]
+        status: Status,
+    },
 }

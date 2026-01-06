@@ -29,3 +29,11 @@ pub struct Job {
     pub url: Option<String>,
     pub status: Status,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Note {
+    pub id: u64,
+    pub job_id: u64,
+    pub text: String,
+    pub created_at: String,
+}

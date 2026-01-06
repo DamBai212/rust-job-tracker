@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "job")]
-#[command(about = "Track job applications locally", long_about = None)]
 pub struct Args {
     /// Override database path (for testing or custom setups)
     #[arg(long)]
@@ -32,5 +31,24 @@ pub enum Command {
         id: u64,
         #[arg(long)]
         status: Status,
+    },
+    /// Manage notes for a job
+    Note {
+        #[command(subcommand)]
+        command: NoteCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NoteCommand {
+    Add {
+        #[arg(long)]
+        id: u64,
+        #[arg(long)]
+        text: String,
+    },
+    List {
+        #[arg(long)]
+        id: u64,
     },
 }

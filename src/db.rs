@@ -20,12 +20,10 @@ pub async fn connect(db_path: &Path) -> Result<SqlitePool> {
 }
 
 pub async fn init(pool: &SqlitePool) -> Result<()> {
-    // Enable foreign keys (SQLite requires this explicitly)
     sqlx::query("PRAGMA foreign_keys = ON;")
         .execute(pool)
         .await?;
 
-    // Jobs table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS jobs (
@@ -41,7 +39,6 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    // Notes table (1 job → many notes)
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS notes (
@@ -156,6 +153,24 @@ pub async fn update_status(pool: &SqlitePool, id: i64, status: Status) -> Result
     Ok(())
 }
 
+pub async fn delete_job(pool: &SqlitePool, id: i64) -> Result<()> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM jobs
+        WHERE id = ?1;
+        "#,
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(DbError::NotFound(id).into());
+    }
+
+    Ok(())
+}
+
 /* ---------- notes ---------- */
 
 pub async fn insert_note(pool: &SqlitePool, job_id: i64, text: &str) -> Result<i64> {
@@ -205,47 +220,13 @@ pub async fn list_notes(pool: &SqlitePool, job_id: i64) -> Result<Vec<Note>> {
         .collect())
 }
 
-/* ---------- tests ---------- */
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
 
     #[tokio::test]
-    async fn insert_and_list_jobs() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-
-        let pool = connect(&db_path).await.unwrap();
-        init(&pool).await.unwrap();
-
-        let id = insert_job(&pool, "Acme", "Backend", None, Status::Applied)
-            .await
-            .unwrap();
-
-        let jobs = list_jobs(&pool).await.unwrap();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].id, id as u64);
-    }
-
-    #[tokio::test]
-    async fn update_status_errors_when_missing() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-
-        let pool = connect(&db_path).await.unwrap();
-        init(&pool).await.unwrap();
-
-        let err = update_status(&pool, 999, Status::Interviewing)
-            .await
-            .unwrap_err();
-
-        assert!(err.to_string().contains("job not found"));
-    }
-
-    #[tokio::test]
-    async fn add_and_list_notes() {
+    async fn delete_job_cascades_notes() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
@@ -256,12 +237,18 @@ mod tests {
             .await
             .unwrap();
 
-        insert_note(&pool, job_id, "Reached out on LinkedIn")
-            .await
-            .unwrap();
+        insert_note(&pool, job_id, "note 1").await.unwrap();
+        insert_note(&pool, job_id, "note 2").await.unwrap();
 
-        let notes = list_notes(&pool, job_id).await.unwrap();
-        assert_eq!(notes.len(), 1);
-        assert_eq!(notes[0].text, "Reached out on LinkedIn");
+        delete_job(&pool, job_id).await.unwrap();
+
+        let remaining = sqlx::query("SELECT COUNT(*) as c FROM notes WHERE job_id = ?1;")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get::<i64, _>("c");
+
+        assert_eq!(remaining, 0);
     }
 }

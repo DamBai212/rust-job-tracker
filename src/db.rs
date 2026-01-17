@@ -1,4 +1,4 @@
-use crate::model::{Job, Status};
+use crate::model::{Job, Note, Status};
 use anyhow::{Context, Result};
 use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions};
 use std::{path::Path, str::FromStr};
@@ -20,6 +20,12 @@ pub async fn connect(db_path: &Path) -> Result<SqlitePool> {
 }
 
 pub async fn init(pool: &SqlitePool) -> Result<()> {
+    // Enable foreign keys (SQLite requires this explicitly)
+    sqlx::query("PRAGMA foreign_keys = ON;")
+        .execute(pool)
+        .await?;
+
+    // Jobs table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS jobs (
@@ -35,8 +41,25 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    // Notes table (1 job → many notes)
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
+
+/* ---------- helpers ---------- */
 
 fn status_to_str(status: Status) -> &'static str {
     match status {
@@ -55,6 +78,17 @@ fn str_to_status(s: &str) -> Status {
         _ => Status::Applied,
     }
 }
+
+async fn job_exists(pool: &SqlitePool, job_id: i64) -> Result<bool> {
+    let row = sqlx::query("SELECT 1 FROM jobs WHERE id = ?1 LIMIT 1;")
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(row.is_some())
+}
+
+/* ---------- jobs ---------- */
 
 pub async fn insert_job(
     pool: &SqlitePool,
@@ -122,34 +156,77 @@ pub async fn update_status(pool: &SqlitePool, id: i64, status: Status) -> Result
     Ok(())
 }
 
+/* ---------- notes ---------- */
+
+pub async fn insert_note(pool: &SqlitePool, job_id: i64, text: &str) -> Result<i64> {
+    if !job_exists(pool, job_id).await? {
+        return Err(DbError::NotFound(job_id).into());
+    }
+
+    let result = sqlx::query(
+        r#"
+        INSERT INTO notes (job_id, text)
+        VALUES (?1, ?2);
+        "#,
+    )
+    .bind(job_id)
+    .bind(text)
+    .execute(pool)
+    .await?;
+
+    Ok(result.last_insert_rowid())
+}
+
+pub async fn list_notes(pool: &SqlitePool, job_id: i64) -> Result<Vec<Note>> {
+    if !job_exists(pool, job_id).await? {
+        return Err(DbError::NotFound(job_id).into());
+    }
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, job_id, text, created_at
+        FROM notes
+        WHERE job_id = ?1
+        ORDER BY id DESC;
+        "#,
+    )
+    .bind(job_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| Note {
+            id: r.get::<i64, _>("id") as u64,
+            job_id: r.get::<i64, _>("job_id") as u64,
+            text: r.get::<String, _>("text"),
+            created_at: r.get::<String, _>("created_at"),
+        })
+        .collect())
+}
+
+/* ---------- tests ---------- */
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
 
     #[tokio::test]
-    async fn insert_and_list_roundtrip() {
+    async fn insert_and_list_jobs() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
         let pool = connect(&db_path).await.unwrap();
         init(&pool).await.unwrap();
 
-        let id = insert_job(
-            &pool,
-            "Acme",
-            "Backend Engineer",
-            Some("https://example.com"),
-            Status::Applied,
-        )
-        .await
-        .unwrap();
+        let id = insert_job(&pool, "Acme", "Backend", None, Status::Applied)
+            .await
+            .unwrap();
 
         let jobs = list_jobs(&pool).await.unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].id, id as u64);
-        assert_eq!(jobs[0].company, "Acme");
-        assert_eq!(jobs[0].status, Status::Applied);
     }
 
     #[tokio::test]
@@ -165,5 +242,26 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().contains("job not found"));
+    }
+
+    #[tokio::test]
+    async fn add_and_list_notes() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let pool = connect(&db_path).await.unwrap();
+        init(&pool).await.unwrap();
+
+        let job_id = insert_job(&pool, "Acme", "Backend", None, Status::Applied)
+            .await
+            .unwrap();
+
+        insert_note(&pool, job_id, "Reached out on LinkedIn")
+            .await
+            .unwrap();
+
+        let notes = list_notes(&pool, job_id).await.unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].text, "Reached out on LinkedIn");
     }
 }

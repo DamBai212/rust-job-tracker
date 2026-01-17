@@ -3,7 +3,7 @@ use predicates::str::contains;
 use tempfile::tempdir;
 
 #[test]
-fn add_then_list_isolated_db() {
+fn delete_job_isolated_db() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
 
@@ -19,21 +19,19 @@ fn add_then_list_isolated_db() {
         "--status",
         "applied",
     ]);
-    add.assert().success().stdout(contains("Added job"));
+    add.assert().success();
 
-    let mut upd = cargo_bin_cmd!("rust-job-tracker");
-    upd.args([
+    let mut del = cargo_bin_cmd!("rust-job-tracker");
+    del.args([
         "--db-path",
         db_path.to_str().unwrap(),
-        "update-status",
+        "delete",
         "--id",
         "1",
-        "--status",
-        "interviewing",
     ]);
-    upd.assert().success().stdout(contains("Updated job #1"));
+    del.assert().success().stdout(contains("Deleted job #1"));
 
     let mut list = cargo_bin_cmd!("rust-job-tracker");
     list.args(["--db-path", db_path.to_str().unwrap(), "list"]);
-    list.assert().success().stdout(contains("interviewing"));
+    list.assert().success().stdout(contains("No jobs"));
 }

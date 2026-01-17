@@ -48,7 +48,7 @@ async fn run_command(command: cli::Command, pool: &SqlitePool) -> Result<()> {
         }
 
         cli::Command::List => {
-            let jobs: Vec<crate::model::Job> = db::list_jobs(pool).await?;
+            let jobs = db::list_jobs(pool).await?;
             if jobs.is_empty() {
                 println!("No jobs yet.");
             } else {
@@ -70,12 +70,16 @@ async fn run_command(command: cli::Command, pool: &SqlitePool) -> Result<()> {
             println!("Updated job #{id} -> {status}");
         }
 
+        cli::Command::Delete { id } => {
+            db::delete_job(pool, id as i64).await?;
+            println!("Deleted job #{id}");
+        }
+
         cli::Command::Note { command } => match command {
             cli::NoteCommand::Add { id, text } => {
                 let note_id = db::insert_note(pool, id as i64, &text).await?;
                 println!("Added note #{note_id} to job #{id}");
             }
-
             cli::NoteCommand::List { id } => {
                 let notes = db::list_notes(pool, id as i64).await?;
                 if notes.is_empty() {
@@ -90,12 +94,4 @@ async fn run_command(command: cli::Command, pool: &SqlitePool) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn smoke() {
-        assert_eq!(2 + 2, 4);
-    }
 }
